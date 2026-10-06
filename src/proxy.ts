@@ -52,9 +52,13 @@ export function createProxyServer(config: FlarehookConfig, store: TrafficStore):
       (clientReq.headers["x-forwarded-for"] as string) ||
       clientReq.socket.remoteAddress || "";
 
+    const forwardHost = (config.targetHost === "127.0.0.1" || config.targetHost === "::1" || config.targetHost === "localhost")
+      ? `localhost:${config.targetPort}`
+      : `${config.targetHost}:${config.targetPort}`;
+
     const forwardHeaders = {
       ...clientReq.headers,
-      host: `${config.targetHost}:${config.targetPort}`,
+      host: forwardHost,
       "x-forwarded-host": clientReq.headers.host || "",
       "x-forwarded-proto": "https",
       "x-forwarded-for": clientIp
@@ -187,9 +191,13 @@ export function createProxyServer(config: FlarehookConfig, store: TrafficStore):
     }
 
     const targetSocket = net.connect(config.targetPort, config.targetHost, () => {
+      const wsHost = (config.targetHost === "127.0.0.1" || config.targetHost === "::1" || config.targetHost === "localhost")
+        ? `localhost:${config.targetPort}`
+        : `${config.targetHost}:${config.targetPort}`;
+
       const headers = Object.entries({
         ...req.headers,
-        host: `${config.targetHost}:${config.targetPort}`
+        host: wsHost
       })
         .map(([k, v]) => `${k}: ${v}`)
         .join("\r\n");

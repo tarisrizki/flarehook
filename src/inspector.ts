@@ -173,7 +173,9 @@ export function createInspectorServer(config: FlarehookConfig, store: TrafficSto
             method: raw.request.method,
             headers: {
               ...headers,
-              host: `${config.targetHost}:${config.targetPort}`
+              host: (config.targetHost === "127.0.0.1" || config.targetHost === "::1" || config.targetHost === "localhost")
+                ? `localhost:${config.targetPort}`
+                : `${config.targetHost}:${config.targetPort}`
             },
             timeout: 10000
           },

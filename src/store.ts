@@ -1,4 +1,6 @@
 import zlib from "node:zlib";
+import fs from "node:fs";
+import path from "node:path";
 import { CapturedRequest, CapturedResponse, TrafficItem, SanitizedTrafficItem } from "./types.js";
 
 const SENSITIVE_HEADERS = new Set([
@@ -43,16 +45,15 @@ export function redactHeaders(headers: Record<string, string | string[] | undefi
 
 export function decodeBodyText(buffer: Buffer, contentEncoding?: string | string[]): string {
   if (!buffer || buffer.length === 0) return "";
-  const encoding = typeof contentEncoding === "string" ? contentEncoding.toLowerCase() : "";
+
+  const encoding = Array.isArray(contentEncoding) ? contentEncoding[0] : contentEncoding;
 
   try {
-    if (encoding.includes("gzip")) {
+    if (encoding === "gzip") {
       return zlib.gunzipSync(buffer).toString("utf8");
-    }
-    if (encoding.includes("deflate")) {
+    } else if (encoding === "deflate") {
       return zlib.inflateSync(buffer).toString("utf8");
-    }
-    if (encoding.includes("br")) {
+    } else if (encoding === "br") {
       return zlib.brotliDecompressSync(buffer).toString("utf8");
     }
     return buffer.toString("utf8");
@@ -61,14 +62,31 @@ export function decodeBodyText(buffer: Buffer, contentEncoding?: string | string
   }
 }
 
+export interface TrafficStoreOptions {
+  maxBytes?: number;
+  persistPath?: string;
+}
+
 export class TrafficStore {
   private items: TrafficItem[] = [];
   private totalBytes: number = 0;
   private maxBytes: number;
+  private persistPath?: string;
   private subscribers: Set<(item: SanitizedTrafficItem) => void> = new Set();
 
-  constructor(maxBytes: number = 50 * 1024 * 1024) {
-    this.maxBytes = maxBytes;
+  constructor(optionsOrMaxBytes?: number | TrafficStoreOptions) {
+    if (typeof optionsOrMaxBytes === "number") {
+      this.maxBytes = optionsOrMaxBytes;
+    } else if (optionsOrMaxBytes) {
+      this.maxBytes = optionsOrMaxBytes.maxBytes ?? (50 * 1024 * 1024);
+      this.persistPath = optionsOrMaxBytes.persistPath;
+    } else {
+      this.maxBytes = 50 * 1024 * 1024;
+    }
+
+    if (this.persistPath) {
+      this.loadFromDisk();
+    }
   }
 
   public addRequest(request: CapturedRequest, replayedFromId?: string): TrafficItem {
@@ -81,6 +99,7 @@ export class TrafficStore {
     this.items.push(item);
     this.totalBytes += request.rawBody.length;
     this.evictIfNecessary();
+    this.flushToDisk();
     this.notify(this.toSanitized(item));
     return item;
   }
@@ -91,6 +110,7 @@ export class TrafficStore {
       item.response = response;
       this.totalBytes += response.rawBody.length;
       this.evictIfNecessary();
+      this.flushToDisk();
       this.notify(this.toSanitized(item));
     }
   }
@@ -106,6 +126,7 @@ export class TrafficStore {
   public clear(): void {
     this.items = [];
     this.totalBytes = 0;
+    this.flushToDisk();
   }
 
   public subscribe(fn: (item: SanitizedTrafficItem) => void): () => void {
@@ -129,6 +150,64 @@ export class TrafficStore {
       if (evicted) {
         this.totalBytes -= (evicted.request.rawBody.length + (evicted.response?.rawBody.length || 0));
       }
+    }
+  }
+
+  private loadFromDisk(): void {
+    if (!this.persistPath || !fs.existsSync(this.persistPath)) return;
+    try {
+      const data = fs.readFileSync(this.persistPath, "utf8");
+      const serialized = JSON.parse(data);
+      if (Array.isArray(serialized)) {
+        this.items = serialized.map((item: any) => ({
+          id: item.id,
+          replayedFromId: item.replayedFromId,
+          request: {
+            ...item.request,
+            rawBody: Buffer.from(item.request.rawBodyBase64 || "", "base64")
+          },
+          response: item.response ? {
+            ...item.response,
+            rawBody: Buffer.from(item.response.rawBodyBase64 || "", "base64")
+          } : undefined
+        }));
+
+        this.totalBytes = this.items.reduce((acc, it) => {
+          return acc + it.request.rawBody.length + (it.response?.rawBody.length || 0);
+        }, 0);
+        this.evictIfNecessary();
+      }
+    } catch {
+      // Ignore corrupt history file gracefully
+    }
+  }
+
+  private flushToDisk(): void {
+    if (!this.persistPath) return;
+    try {
+      const dir = path.dirname(this.persistPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      const serialized = this.items.map(item => ({
+        id: item.id,
+        replayedFromId: item.replayedFromId,
+        request: {
+          ...item.request,
+          rawBody: undefined,
+          rawBodyBase64: item.request.rawBody.toString("base64")
+        },
+        response: item.response ? {
+          ...item.response,
+          rawBody: undefined,
+          rawBodyBase64: item.response.rawBody.toString("base64")
+        } : undefined
+      }));
+
+      fs.writeFileSync(this.persistPath, JSON.stringify(serialized), "utf8");
+    } catch {
+      // Ignore disk write errors silently
     }
   }
 

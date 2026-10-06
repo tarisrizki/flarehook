@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import zlib from "node:zlib";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import { TrafficStore, redactHeaders, decodeBodyText } from "../src/store.js";
 import { CapturedRequest } from "../src/types.js";
 
@@ -52,5 +55,40 @@ describe("TrafficStore & RAM Accounting", () => {
     const history = tinyStore.getSanitizedHistory();
     expect(history.length).toBeLessThan(4);
     expect(history.some(h => h.id === "req_0")).toBe(false);
+  });
+
+  it("persists items to disk and restores them upon re-initialization", () => {
+    const testFile = path.join(os.tmpdir(), `flarehook-test-${Date.now()}.json`);
+    try {
+      const store1 = new TrafficStore({ maxBytes: 10000, persistPath: testFile });
+      store1.addRequest({
+        id: "req_persisted",
+        timestamp: Date.now(),
+        method: "POST",
+        rawUrl: "/webhook/test",
+        path: "/webhook/test",
+        headers: { "content-type": "application/json" },
+        rawBody: Buffer.from("test-body", "utf8"),
+        isTruncated: false,
+        byteSize: 9
+      });
+      store1.setResponse("req_persisted", {
+        statusCode: 200,
+        headers: { "content-type": "application/json" },
+        rawBody: Buffer.from("ok", "utf8"),
+        durationMs: 12,
+        isTruncated: false,
+        byteSize: 2
+      });
+
+      const store2 = new TrafficStore({ maxBytes: 10000, persistPath: testFile });
+      const raw = store2.getRaw("req_persisted");
+      expect(raw).toBeDefined();
+      expect(raw?.request.rawBody.toString("utf8")).toBe("test-body");
+      expect(raw?.response?.statusCode).toBe(200);
+      expect(raw?.response?.rawBody.toString("utf8")).toBe("ok");
+    } finally {
+      if (fs.existsSync(testFile)) fs.unlinkSync(testFile);
+    }
   });
 });

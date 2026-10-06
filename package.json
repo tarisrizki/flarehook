@@ -15,8 +15,30 @@
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "example": "node examples/mock-receiver.js"
   },
+  "keywords": [
+    "tunnel",
+    "cloudflare",
+    "cloudflared",
+    "trycloudflare",
+    "webhook",
+    "ngrok",
+    "inspector",
+    "replay",
+    "stripe",
+    "github",
+    "midtrans",
+    "hmac"
+  ],
+  "author": "tarisrizki <m.taris@mhs.usk.ac.id>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tarisrizki/flarehook.git"
+  },
+  "homepage": "https://github.com/tarisrizki/flarehook#readme",
+  "bugs": "https://github.com/tarisrizki/flarehook/issues",
   "dependencies": {
     "picocolors": "^1.1.1",
     "qrcode-terminal": "^0.12.0",

@@ -161,4 +161,4 @@ npm run build
 
 ## 📄 License
 
-MIT © [Dragon](https://github.com)
+MIT © [Taris Rizki](https://github.com/tarisrizki)

@@ -5,3 +5,4 @@ export * from "./proxy.js";
 export * from "./inspector.js";
 export * from "./tunnel.js";
 export * from "./terminal.js";
+export * from "./mcp.js";

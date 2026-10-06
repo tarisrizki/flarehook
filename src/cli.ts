@@ -1,11 +1,15 @@
 import net from "node:net";
+import path from "node:path";
+import os from "node:os";
+import http from "node:http";
 import { parseArgs } from "node:util";
-import { TrafficStore } from "./store.js";
+import { TrafficStore, decodeBodyText, redactHeaders } from "./store.js";
 import { createProxyServer } from "./proxy.js";
 import { createInspectorServer } from "./inspector.js";
 import { UntunTunnelProvider } from "./tunnel.js";
 import { printBanner, formatRequestLine } from "./terminal.js";
-import { FlarehookConfig } from "./types.js";
+import { startMcpServer, McpHandlers } from "./mcp.js";
+import { FlarehookConfig, ReplayPayload } from "./types.js";
 
 async function isPortFree(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -41,12 +45,35 @@ async function probeHost(host: string, port: number): Promise<boolean> {
   });
 }
 
+async function probeActiveInspector(port: number): Promise<boolean> {
+  return new Promise(resolve => {
+    const req = http.get(
+      {
+        host: "127.0.0.1",
+        port,
+        path: "/api/history",
+        headers: { host: `127.0.0.1:${port}` },
+        timeout: 300
+      },
+      res => {
+        resolve(res.statusCode === 200);
+      }
+    );
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
     options: {
       auth: { type: "string" },
       ui: { type: "string" },
+      persist: { type: "boolean" },
       help: { type: "boolean", short: "h" }
     },
     allowPositionals: true
@@ -54,17 +81,23 @@ async function main() {
 
   if (values.help) {
     console.log(`
-Usage: npx flarehook [port | url] [options]
+Usage: npx flarehook [port | url | mcp] [options]
+
+Subcommands:
+  mcp [port]          Run as a Model Context Protocol (MCP) server for AI agents (Cursor, Claude Desktop)
 
 Options:
   --auth <user:pass>  Protect public tunnel with HTTP Basic Auth
   --ui <port>         Inspector UI port (default: 4040)
+  --persist           Persist request history to ~/.flarehook/history.json
   -h, --help          Show help
     `);
     process.exit(0);
   }
 
-  const targetArg = positionals[0] || "3000";
+  const isMcpMode = positionals[0] === "mcp";
+  const targetArg = isMcpMode ? (positionals[1] || "3000") : (positionals[0] || "3000");
+
   let targetProtocol: "http:" | "https:" = "http:";
   let targetHost = "127.0.0.1";
   let targetPort = 3000;
@@ -78,20 +111,133 @@ Options:
     targetPort = Number(targetArg);
   }
 
-  // Probe target IPv4 vs IPv6 if target is localhost/127.0.0.1
+  // 1. MCP BRIDGE MODE: If flarehook is already running in another terminal
+  const desiredUiPort = Number(values.ui) || 4040;
+  if (isMcpMode && (await probeActiveInspector(desiredUiPort))) {
+    const bridgeHandlers: McpHandlers = {
+      getStatus: () => ({
+        tunnelUrl: "(active in running flarehook instance)",
+        targetUrl: `${targetProtocol}//${targetHost}:${targetPort}`,
+        inspectorUrl: `http://127.0.0.1:${desiredUiPort}`
+      }),
+      getHistory: () => [],
+      getRequest: () => null,
+      replayRequest: async () => ({ ok: false, error: "Bridge replay not implemented" }),
+      clearHistory: () => {}
+    };
+
+    // Override with dynamic fetch to active instance
+    bridgeHandlers.getHistory = (limit?: number) => {
+      return new Promise<any[]>(resolve => {
+        http.get(
+          {
+            host: "127.0.0.1",
+            port: desiredUiPort,
+            path: "/api/history",
+            headers: { host: `127.0.0.1:${desiredUiPort}` }
+          },
+          res => {
+            let data = "";
+            res.on("data", c => (data += c));
+            res.on("end", () => {
+              try {
+                const arr = JSON.parse(data);
+                resolve(Array.isArray(arr) ? (limit ? arr.slice(0, limit) : arr) : []);
+              } catch {
+                resolve([]);
+              }
+            });
+          }
+        ).on("error", () => resolve([]));
+      }) as any;
+    };
+
+    bridgeHandlers.getRequest = (id: string, revealSecrets?: boolean) => {
+      return new Promise<any>(resolve => {
+        http.get(
+          {
+            host: "127.0.0.1",
+            port: desiredUiPort,
+            path: `/api/request/${id}${revealSecrets ? "?reveal=1" : ""}`,
+            headers: { host: `127.0.0.1:${desiredUiPort}` }
+          },
+          res => {
+            let data = "";
+            res.on("data", c => (data += c));
+            res.on("end", () => {
+              try {
+                resolve(JSON.parse(data));
+              } catch {
+                resolve(null);
+              }
+            });
+          }
+        ).on("error", () => resolve(null));
+      }) as any;
+    };
+
+    bridgeHandlers.replayRequest = (id: string, payload: ReplayPayload) => {
+      return new Promise<any>(resolve => {
+        const bodyBuf = Buffer.from(JSON.stringify(payload), "utf8");
+        const req = http.request(
+          {
+            host: "127.0.0.1",
+            port: desiredUiPort,
+            path: `/api/replay/${id}`,
+            method: "POST",
+            headers: {
+              host: `127.0.0.1:${desiredUiPort}`,
+              "content-type": "application/json",
+              "content-length": String(bodyBuf.length)
+            }
+          },
+          res => {
+            let data = "";
+            res.on("data", c => (data += c));
+            res.on("end", () => {
+              try {
+                resolve(JSON.parse(data));
+              } catch {
+                resolve({ ok: false, error: data });
+              }
+            });
+          }
+        );
+        req.on("error", err => resolve({ ok: false, error: err.message }));
+        req.write(bodyBuf);
+        req.end();
+      });
+    };
+
+    bridgeHandlers.clearHistory = () => {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: desiredUiPort,
+        path: "/api/clear",
+        method: "POST",
+        headers: { host: `127.0.0.1:${desiredUiPort}` }
+      });
+      req.on("error", () => {});
+      req.end();
+    };
+
+    startMcpServer(bridgeHandlers);
+    return;
+  }
+
+  // 2. STANDALONE MODE (Normal CLI or Standalone MCP Server)
   if (targetHost === "127.0.0.1" || targetHost === "localhost") {
     const v4Alive = await probeHost("127.0.0.1", targetPort);
     if (!v4Alive) {
       const v6Alive = await probeHost("::1", targetPort);
       if (v6Alive) {
         targetHost = "::1";
-      } else {
-        console.warn(`\n⚠️  Warning: Target port ${targetPort} is not answering yet. Start your local dev server on port ${targetPort}.`);
+      } else if (!isMcpMode) {
+        console.warn(`\n[warn] Target port ${targetPort} is not answering yet. Start your local dev server on port ${targetPort}.`);
       }
     }
   }
 
-  // Parse auth from flag or env
   let auth: { user: string; pass: string } | undefined;
   const rawAuth = values.auth || process.env.FLAREHOOK_AUTH;
   if (rawAuth) {
@@ -101,7 +247,6 @@ Options:
     }
   }
 
-  const desiredUiPort = Number(values.ui) || 4040;
   const inspectorPort = await findAvailablePort(desiredUiPort);
   const proxyPort = await findAvailablePort(28899);
 
@@ -113,39 +258,123 @@ Options:
     auth
   };
 
-  const store = new TrafficStore();
+  const persistPath = (values.persist || isMcpMode)
+    ? path.join(os.homedir(), ".flarehook", "history.json")
+    : undefined;
 
-  // 1. Boot Proxy Server
+  const store = new TrafficStore({ persistPath });
+
   const proxyServer = createProxyServer(config, store);
   await new Promise<void>(resolve => proxyServer.listen(proxyPort, "127.0.0.1", () => resolve()));
 
-  // 2. Boot Inspector Server
   const inspectorServer = createInspectorServer(config, store);
   await new Promise<void>(resolve => inspectorServer.listen(inspectorPort, "127.0.0.1", () => resolve()));
 
-  // 3. Register live terminal logger
-  store.subscribe(item => {
-    if (item.statusCode !== undefined && item.durationMs !== undefined) {
-      console.log(formatRequestLine(item.method, item.path, item.statusCode, item.durationMs, item.isStreaming));
-    }
-  });
+  if (!isMcpMode) {
+    store.subscribe(item => {
+      if (item.statusCode !== undefined && item.durationMs !== undefined) {
+        console.log(formatRequestLine(item.method, item.path, item.statusCode, item.durationMs, item.isStreaming));
+      }
+    });
+  }
 
-  // 4. Boot Cloudflare Quick Tunnel pointing to the PROXY port
   const tunnelProvider = new UntunTunnelProvider();
-  console.log("Starting Cloudflare tunnel...");
+  if (!isMcpMode) {
+    console.log("Starting Cloudflare tunnel...");
+  } else {
+    // In MCP mode, redirect logs to stderr so stdout is 100% clean JSON-RPC
+    console.error("Starting Cloudflare tunnel in MCP mode...");
+  }
+
   const tunnel = await tunnelProvider.start(`http://127.0.0.1:${proxyPort}`);
 
-  // 5. Print Banner & QR Code
-  printBanner({
-    tunnelUrl: tunnel.url,
-    targetUrl: `${targetProtocol}//${targetHost}:${targetPort}`,
-    inspectorUrl: `http://127.0.0.1:${inspectorPort}`,
-    authEnabled: !!auth
-  });
+  if (!isMcpMode) {
+    printBanner({
+      tunnelUrl: tunnel.url,
+      targetUrl: `${targetProtocol}//${targetHost}:${targetPort}`,
+      inspectorUrl: `http://127.0.0.1:${inspectorPort}`,
+      authEnabled: !!auth
+    });
+  } else {
+    // Launch MCP Server on STDIO
+    const localMcpHandlers: McpHandlers = {
+      getStatus: () => ({
+        tunnelUrl: tunnel.url,
+        targetUrl: `${targetProtocol}//${targetHost}:${targetPort}`,
+        inspectorUrl: `http://127.0.0.1:${inspectorPort}`
+      }),
+      getHistory: (limit?: number) => {
+        const history = store.getSanitizedHistory();
+        return limit ? history.slice(0, limit) : history;
+      },
+      getRequest: (id: string, revealSecrets?: boolean) => {
+        const item = store.getRaw(id);
+        if (!item) return null;
+        return {
+          id: item.id,
+          replayedFromId: item.replayedFromId,
+          request: {
+            ...item.request,
+            headers: revealSecrets ? item.request.headers : redactHeaders(item.request.headers),
+            bodyText: decodeBodyText(item.request.rawBody, item.request.headers["content-encoding"])
+          },
+          response: item.response ? {
+            ...item.response,
+            headers: revealSecrets ? item.response.headers : redactHeaders(item.response.headers),
+            bodyText: decodeBodyText(item.response.rawBody, item.response.headers["content-encoding"])
+          } : undefined
+        };
+      },
+      replayRequest: async (id: string, payload: ReplayPayload) => {
+        const item = store.getRaw(id);
+        if (!item) throw new Error(`Request not found: ${id}`);
+
+        return new Promise<any>((resolve, reject) => {
+          const bodyBuf = Buffer.from(JSON.stringify(payload), "utf8");
+          const req = http.request(
+            {
+              host: "127.0.0.1",
+              port: inspectorPort,
+              path: `/api/replay/${id}`,
+              method: "POST",
+              headers: {
+                host: `127.0.0.1:${inspectorPort}`,
+                "content-type": "application/json",
+                "content-length": String(bodyBuf.length)
+              }
+            },
+            res => {
+              let data = "";
+              res.on("data", c => (data += c));
+              res.on("end", () => {
+                try {
+                  resolve(JSON.parse(data));
+                } catch {
+                  resolve({ ok: false, error: data });
+                }
+              });
+            }
+          );
+          req.on("error", err => reject(err));
+          req.write(bodyBuf);
+          req.end();
+        });
+      },
+      clearHistory: () => {
+        store.clear();
+      }
+    };
+
+    startMcpServer(localMcpHandlers);
+  }
 
   // Graceful Teardown
   const shutdown = async () => {
-    console.log("\nShutting down tunnel...");
+    if (!isMcpMode) {
+      console.log("\nShutting down tunnel...");
+    } else {
+      console.error("\nShutting down MCP tunnel...");
+    }
     await tunnel.close();
     proxyServer.close();
     inspectorServer.close();

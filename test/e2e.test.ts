@@ -48,6 +48,7 @@ describe("E2E Webhook & Replay Flow", () => {
     expect(index.reSignWebhook).toBeDefined();
     expect(index.printBanner).toBeDefined();
     expect(index.formatRequestLine).toBeDefined();
+    expect(index.startMcpServer).toBeDefined();
   });
 
   it("receives webhook through proxy, appears in store, and replays with fresh HMAC signature", async () => {

@@ -4,7 +4,7 @@
   "description": "Zero-config Cloudflare Tunnel with Webhook Inspector, HMAC Re-Signer & Model Context Protocol (MCP) Server for AI Agents",
   "type": "module",
   "bin": {
-    "flarehook": "./dist/cli.js"
+    "flarehook": "dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -35,7 +35,7 @@
   "author": "tarisrizki <m.taris@mhs.usk.ac.id>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tarisrizki/flarehook.git"
+    "url": "git+https://github.com/tarisrizki/flarehook.git"
   },
   "homepage": "https://github.com/tarisrizki/flarehook#readme",
   "bugs": "https://github.com/tarisrizki/flarehook/issues",

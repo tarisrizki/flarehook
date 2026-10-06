@@ -11,7 +11,7 @@ export function formatRequestLine(
   const methodColor = method === "POST" ? pc.cyan(method) : pc.green(method);
   const statusColor = statusCode >= 400 ? pc.red(statusCode) : pc.green(statusCode);
   const time = new Date().toLocaleTimeString();
-  const warning = sseDetected ? pc.yellow(" (⚠️ SSE over Quick Tunnel may buffer)") : "";
+  const warning = sseDetected ? pc.dim(" [SSE: stream may buffer]") : "";
 
   return `${pc.dim(time)}  ${methodColor}  ${path}  ${statusColor}  ${pc.dim(`(${durationMs}ms)`)}${warning}`;
 }
@@ -23,7 +23,7 @@ export function printBanner(options: {
   authEnabled?: boolean;
 }): void {
   const lines = [
-    `🔥 flarehook v1.0.0`,
+    `flarehook v1.0.0`,
     ``,
     `Tunnel URL:    ${options.tunnelUrl}`,
     `Forwarding to: ${options.targetUrl}`,
@@ -39,13 +39,13 @@ export function printBanner(options: {
   lines.push(`Cloudflare Quick Tunnel: max 200 in-flight reqs.`);
 
   const maxLen = Math.max(...lines.map(l => l.length), 50);
-  const borderTop = pc.bold(pc.yellow("┌" + "─".repeat(maxLen + 4) + "┐"));
-  const borderBottom = pc.bold(pc.yellow("└" + "─".repeat(maxLen + 4) + "┘"));
+  const borderTop = pc.dim("┌" + "─".repeat(maxLen + 4) + "┐");
+  const borderBottom = pc.dim("└" + "─".repeat(maxLen + 4) + "┘");
 
   console.log("\n" + borderTop);
   for (const line of lines) {
     const pad = " ".repeat(maxLen - line.length);
-    console.log(pc.bold(pc.yellow("│")) + "  " + line + pad + "  " + pc.bold(pc.yellow("│")));
+    console.log(pc.dim("│") + "  " + line + pad + "  " + pc.dim("│"));
   }
   console.log(borderBottom + "\n");
 
@@ -53,5 +53,5 @@ export function printBanner(options: {
     console.log(qrcodeStr);
   });
 
-  console.log(pc.bold("\n  Live Requests:"));
+  console.log(pc.dim("\n  Requests:"));
 }

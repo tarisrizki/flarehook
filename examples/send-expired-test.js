@@ -14,8 +14,8 @@ const expiredTimestamp = 1700000000;
 const hmac = crypto.createHmac("sha256", secret).update(`${expiredTimestamp}.${body}`).digest("hex");
 const sigHeader = `t=${expiredTimestamp},v1=${hmac}`;
 
-console.log(`📡 Sending expired Stripe webhook to: ${targetUrl}/webhook/stripe`);
-console.log(`   Header: ${sigHeader}`);
+console.log(`[send] Target: ${targetUrl}/webhook/stripe`);
+console.log(`       Header: ${sigHeader}`);
 
 try {
   const res = await fetch(`${targetUrl}/webhook/stripe`, {
@@ -27,9 +27,9 @@ try {
     body
   });
 
-  console.log(`\n📬 Response Status: ${res.status} ${res.statusText}`);
+  console.log(`[response] Status: ${res.status} ${res.statusText}`);
   const text = await res.text();
-  console.log(`   Body: ${text}`);
+  console.log(`           Body: ${text}`);
 } catch (err) {
-  console.error("❌ Failed to send request:", err.message);
+  console.error("[error] Request failed:", err.message);
 }

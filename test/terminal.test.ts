@@ -12,7 +12,7 @@ describe("Terminal Logging", () => {
 
   it("appends SSE warning badge when sseDetected is true", () => {
     const line = formatRequestLine("GET", "/stream", 200, 15, true);
-    expect(line).toContain("⚠️ SSE");
+    expect(line).toContain("[SSE: stream may buffer]");
   });
 
   it("prints banner with tunnel, target, and inspector info without error", () => {

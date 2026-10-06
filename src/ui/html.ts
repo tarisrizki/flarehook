@@ -64,7 +64,7 @@ export function getInspectorHtml(config: FlarehookConfig): string {
 </head>
 <body>
   <header>
-    <div class="brand">🔥 flarehook <span class="status-pill">${config.targetProtocol}//${config.targetHost}:${config.targetPort}</span></div>
+    <div class="brand">flarehook <span class="status-pill">${config.targetProtocol}//${config.targetHost}:${config.targetPort}</span></div>
     <div><button class="btn" id="clearBtn">Clear History</button></div>
   </header>
   <div class="main">

@@ -15,8 +15,8 @@ const server = http.createServer((req, res) => {
 
     if (url === "/webhook/stripe" && req.method === "POST") {
       const sigHeader = req.headers["stripe-signature"];
-      console.log(`\n📥 [Mock App] Received Stripe webhook (${rawBody.length} bytes)`);
-      console.log(`   Header: ${sigHeader || "(none)"}`);
+      console.log(`\n[receiver] Received Stripe webhook (${rawBody.length} bytes)`);
+      console.log(`           Header: ${sigHeader || "(none)"}`);
 
       if (!sigHeader) {
         res.writeHead(400, { "content-type": "application/json" });
@@ -39,7 +39,7 @@ const server = http.createServer((req, res) => {
       // 1. Verify Timestamp Tolerance
       if (Math.abs(nowSec - timestamp) > tolerance) {
         const diff = Math.abs(nowSec - timestamp);
-        console.log(`❌ [Mock App] Signature rejected: Timestamp outside tolerance window (${diff}s drift)`);
+        console.log(`[error] Signature rejected: Timestamp outside tolerance window (${diff}s drift)`);
         res.writeHead(400, { "content-type": "application/json" });
         res.end(JSON.stringify({
           error: "Timestamp outside tolerance window",
@@ -56,7 +56,7 @@ const server = http.createServer((req, res) => {
       const expectedHash = crypto.createHmac("sha256", SECRET).update(payloadToSign).digest("hex");
 
       if (expectedHash !== receivedHash) {
-        console.log(`❌ [Mock App] Signature rejected: Invalid HMAC digest`);
+        console.log(`[error] Signature rejected: Invalid HMAC digest`);
         res.writeHead(400, { "content-type": "application/json" });
         res.end(JSON.stringify({
           error: "Invalid signature digest",
@@ -65,7 +65,7 @@ const server = http.createServer((req, res) => {
         return;
       }
 
-      console.log(`✅ [Mock App] Signature successfully verified! Webhook accepted.`);
+      console.log(`[ok] Signature verified. Webhook accepted.`);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({
         success: true,
@@ -98,6 +98,6 @@ function tryParseJson(str) {
 }
 
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`🚀 Mock Webhook Receiver listening on http://127.0.0.1:${PORT}`);
-  console.log(`🔑 Webhook Secret configured: ${SECRET}`);
+  console.log(`[receiver] Listening on http://127.0.0.1:${PORT}`);
+  console.log(`[receiver] Secret configured: ${SECRET}`);
 });

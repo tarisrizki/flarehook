@@ -132,7 +132,7 @@ Options:
 
   // 4. Boot Cloudflare Quick Tunnel pointing to the PROXY port
   const tunnelProvider = new UntunTunnelProvider();
-  console.log("⚡ Starting Cloudflare Quick Tunnel...");
+  console.log("Starting Cloudflare tunnel...");
   const tunnel = await tunnelProvider.start(`http://127.0.0.1:${proxyPort}`);
 
   // 5. Print Banner & QR Code
@@ -145,7 +145,7 @@ Options:
 
   // Graceful Teardown
   const shutdown = async () => {
-    console.log("\n🛑 Closing tunnel and freeing ports...");
+    console.log("\nShutting down tunnel...");
     await tunnel.close();
     proxyServer.close();
     inspectorServer.close();

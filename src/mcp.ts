@@ -3,11 +3,11 @@ import { Readable, Writable } from "node:stream";
 import { ReplayPayload } from "./types.js";
 
 export interface McpHandlers {
-  getStatus: () => { tunnelUrl: string; targetUrl: string; inspectorUrl: string };
-  getHistory: (limit?: number) => any[];
-  getRequest: (id: string, revealSecrets?: boolean) => any;
+  getStatus: () => { tunnelUrl: string; targetUrl: string; inspectorUrl: string } | Promise<{ tunnelUrl: string; targetUrl: string; inspectorUrl: string }>;
+  getHistory: (limit?: number) => any[] | Promise<any[]>;
+  getRequest: (id: string, revealSecrets?: boolean) => any | Promise<any>;
   replayRequest: (id: string, payload: ReplayPayload) => Promise<any>;
-  clearHistory: () => void;
+  clearHistory: () => void | Promise<void>;
 }
 
 const MCP_TOOLS = [
@@ -173,19 +173,19 @@ export function startMcpServer(
 
           switch (toolName) {
             case "flarehook_get_tunnel": {
-              toolResult = handlers.getStatus();
+              toolResult = await handlers.getStatus();
               break;
             }
 
             case "flarehook_list_requests": {
               const limit = toolArgs.limit || 20;
-              toolResult = handlers.getHistory(limit);
+              toolResult = await handlers.getHistory(limit);
               break;
             }
 
             case "flarehook_get_request": {
               if (!toolArgs.id) throw new Error("Missing required argument: id");
-              toolResult = handlers.getRequest(toolArgs.id, toolArgs.revealSecrets);
+              toolResult = await handlers.getRequest(toolArgs.id, toolArgs.revealSecrets);
               break;
             }
 
@@ -202,7 +202,7 @@ export function startMcpServer(
             }
 
             case "flarehook_clear_history": {
-              handlers.clearHistory();
+              await handlers.clearHistory();
               toolResult = { ok: true, message: "History cleared" };
               break;
             }

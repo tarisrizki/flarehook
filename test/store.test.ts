@@ -10,7 +10,7 @@ describe("TrafficStore & RAM Accounting", () => {
   let store: TrafficStore;
 
   beforeEach(() => {
-    store = new TrafficStore(50 * 1024 * 1024);
+    store = new TrafficStore();
   });
 
   it("redacts sensitive headers correctly including array set-cookie", () => {
@@ -37,7 +37,7 @@ describe("TrafficStore & RAM Accounting", () => {
   });
 
   it("evicts oldest items based strictly on actual captured RAM bytes", () => {
-    const tinyStore = new TrafficStore(100); // 100 bytes max
+    const tinyStore = new TrafficStore({ maxBytes: 100 }); // 100 bytes max
     for (let i = 0; i < 4; i++) {
       tinyStore.addRequest({
         id: `req_${i}`,

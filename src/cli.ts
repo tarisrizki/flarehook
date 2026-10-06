@@ -6,29 +6,26 @@ import { parseArgs } from "node:util";
 import { TrafficStore, decodeBodyText, redactHeaders } from "./store.js";
 import { createProxyServer } from "./proxy.js";
 import { createInspectorServer } from "./inspector.js";
-import { UntunTunnelProvider } from "./tunnel.js";
+import { startCloudflareTunnel } from "./tunnel.js";
 import { printBanner, formatRequestLine } from "./terminal.js";
 import { startMcpServer, McpHandlers } from "./mcp.js";
 import { FlarehookConfig, ReplayPayload } from "./types.js";
 
-async function isPortFree(port: number): Promise<boolean> {
+async function getAvailablePort(preferredPort: number): Promise<number> {
   return new Promise(resolve => {
     const server = net.createServer();
-    server.once("error", () => resolve(false));
-    server.once("listening", () => {
-      server.close();
-      resolve(true);
+    server.once("error", () => {
+      const fallback = net.createServer();
+      fallback.listen(0, "127.0.0.1", () => {
+        const port = (fallback.address() as net.AddressInfo).port;
+        fallback.close(() => resolve(port));
+      });
     });
-    server.listen(port, "127.0.0.1");
+    server.once("listening", () => {
+      server.close(() => resolve(preferredPort));
+    });
+    server.listen(preferredPort, "127.0.0.1");
   });
-}
-
-async function findAvailablePort(startPort: number): Promise<number> {
-  let port = startPort;
-  while (!(await isPortFree(port))) {
-    port++;
-  }
-  return port;
 }
 
 async function probeHost(host: string, port: number): Promise<boolean> {
@@ -46,25 +43,15 @@ async function probeHost(host: string, port: number): Promise<boolean> {
 }
 
 async function probeActiveInspector(port: number): Promise<boolean> {
-  return new Promise(resolve => {
-    const req = http.get(
-      {
-        host: "127.0.0.1",
-        port,
-        path: "/api/history",
-        headers: { host: `127.0.0.1:${port}` },
-        timeout: 300
-      },
-      res => {
-        resolve(res.statusCode === 200);
-      }
-    );
-    req.on("error", () => resolve(false));
-    req.on("timeout", () => {
-      req.destroy();
-      resolve(false);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/history`, {
+      headers: { host: `127.0.0.1:${port}` },
+      signal: AbortSignal.timeout(300)
     });
-  });
+    return res.status === 200;
+  } catch {
+    return false;
+  }
 }
 
 async function main() {
@@ -120,105 +107,49 @@ Options:
         targetUrl: `${targetProtocol}//${targetHost}:${targetPort}`,
         inspectorUrl: `http://127.0.0.1:${desiredUiPort}`
       }),
-      getHistory: () => [],
-      getRequest: () => null,
-      replayRequest: async () => ({ ok: false, error: "Bridge replay not implemented" }),
-      clearHistory: () => {}
-    };
-
-    // Override with dynamic fetch to active instance
-    bridgeHandlers.getHistory = (limit?: number) => {
-      return new Promise<any[]>(resolve => {
-        http.get(
-          {
-            host: "127.0.0.1",
-            port: desiredUiPort,
-            path: "/api/history",
+      getHistory: async (limit?: number) => {
+        try {
+          const res = await fetch(`http://127.0.0.1:${desiredUiPort}/api/history`, {
             headers: { host: `127.0.0.1:${desiredUiPort}` }
-          },
-          res => {
-            let data = "";
-            res.on("data", c => (data += c));
-            res.on("end", () => {
-              try {
-                const arr = JSON.parse(data);
-                resolve(Array.isArray(arr) ? (limit ? arr.slice(0, limit) : arr) : []);
-              } catch {
-                resolve([]);
-              }
-            });
-          }
-        ).on("error", () => resolve([]));
-      }) as any;
-    };
-
-    bridgeHandlers.getRequest = (id: string, revealSecrets?: boolean) => {
-      return new Promise<any>(resolve => {
-        http.get(
-          {
-            host: "127.0.0.1",
-            port: desiredUiPort,
-            path: `/api/request/${id}${revealSecrets ? "?reveal=1" : ""}`,
-            headers: { host: `127.0.0.1:${desiredUiPort}` }
-          },
-          res => {
-            let data = "";
-            res.on("data", c => (data += c));
-            res.on("end", () => {
-              try {
-                resolve(JSON.parse(data));
-              } catch {
-                resolve(null);
-              }
-            });
-          }
-        ).on("error", () => resolve(null));
-      }) as any;
-    };
-
-    bridgeHandlers.replayRequest = (id: string, payload: ReplayPayload) => {
-      return new Promise<any>(resolve => {
-        const bodyBuf = Buffer.from(JSON.stringify(payload), "utf8");
-        const req = http.request(
-          {
-            host: "127.0.0.1",
-            port: desiredUiPort,
-            path: `/api/replay/${id}`,
+          });
+          const arr = await res.json();
+          return Array.isArray(arr) ? (limit ? arr.slice(0, limit) : arr) : [];
+        } catch {
+          return [];
+        }
+      },
+      getRequest: async (id: string, revealSecrets?: boolean) => {
+        try {
+          const res = await fetch(
+            `http://127.0.0.1:${desiredUiPort}/api/request/${id}${revealSecrets ? "?reveal=1" : ""}`,
+            { headers: { host: `127.0.0.1:${desiredUiPort}` } }
+          );
+          return res.ok ? await res.json() : null;
+        } catch {
+          return null;
+        }
+      },
+      replayRequest: async (id: string, payload: ReplayPayload) => {
+        try {
+          const res = await fetch(`http://127.0.0.1:${desiredUiPort}/api/replay/${id}`, {
             method: "POST",
             headers: {
               host: `127.0.0.1:${desiredUiPort}`,
-              "content-type": "application/json",
-              "content-length": String(bodyBuf.length)
-            }
-          },
-          res => {
-            let data = "";
-            res.on("data", c => (data += c));
-            res.on("end", () => {
-              try {
-                resolve(JSON.parse(data));
-              } catch {
-                resolve({ ok: false, error: data });
-              }
-            });
-          }
-        );
-        req.on("error", err => resolve({ ok: false, error: err.message }));
-        req.write(bodyBuf);
-        req.end();
-      });
-    };
-
-    bridgeHandlers.clearHistory = () => {
-      const req = http.request({
-        host: "127.0.0.1",
-        port: desiredUiPort,
-        path: "/api/clear",
-        method: "POST",
-        headers: { host: `127.0.0.1:${desiredUiPort}` }
-      });
-      req.on("error", () => {});
-      req.end();
+              "content-type": "application/json"
+            },
+            body: JSON.stringify(payload)
+          });
+          return await res.json();
+        } catch (err: any) {
+          return { ok: false, error: err.message };
+        }
+      },
+      clearHistory: () => {
+        fetch(`http://127.0.0.1:${desiredUiPort}/api/clear`, {
+          method: "POST",
+          headers: { host: `127.0.0.1:${desiredUiPort}` }
+        }).catch(() => {});
+      }
     };
 
     startMcpServer(bridgeHandlers);
@@ -247,8 +178,8 @@ Options:
     }
   }
 
-  const inspectorPort = await findAvailablePort(desiredUiPort);
-  const proxyPort = await findAvailablePort(28899);
+  const inspectorPort = await getAvailablePort(desiredUiPort);
+  const proxyPort = await getAvailablePort(28899);
 
   const config: FlarehookConfig = {
     targetProtocol,
@@ -278,7 +209,6 @@ Options:
     });
   }
 
-  const tunnelProvider = new UntunTunnelProvider();
   if (!isMcpMode) {
     console.log("Starting Cloudflare tunnel...");
   } else {
@@ -286,7 +216,7 @@ Options:
     console.error("Starting Cloudflare tunnel in MCP mode...");
   }
 
-  const tunnel = await tunnelProvider.start(`http://127.0.0.1:${proxyPort}`);
+  const tunnel = await startCloudflareTunnel(`http://127.0.0.1:${proxyPort}`);
 
   if (!isMcpMode) {
     printBanner({

@@ -74,15 +74,9 @@ export class TrafficStore {
   private persistPath?: string;
   private subscribers: Set<(item: SanitizedTrafficItem) => void> = new Set();
 
-  constructor(optionsOrMaxBytes?: number | TrafficStoreOptions) {
-    if (typeof optionsOrMaxBytes === "number") {
-      this.maxBytes = optionsOrMaxBytes;
-    } else if (optionsOrMaxBytes) {
-      this.maxBytes = optionsOrMaxBytes.maxBytes ?? (50 * 1024 * 1024);
-      this.persistPath = optionsOrMaxBytes.persistPath;
-    } else {
-      this.maxBytes = 50 * 1024 * 1024;
-    }
+  constructor(options: TrafficStoreOptions = {}) {
+    this.maxBytes = options.maxBytes ?? 50 * 1024 * 1024;
+    this.persistPath = options.persistPath;
 
     if (this.persistPath) {
       this.loadFromDisk();

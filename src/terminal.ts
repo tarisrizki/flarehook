@@ -1,4 +1,3 @@
-import qrcode from "qrcode-terminal";
 import pc from "picocolors";
 
 export function formatRequestLine(
@@ -47,11 +46,6 @@ export function printBanner(options: {
     const pad = " ".repeat(maxLen - line.length);
     console.log(pc.dim("│") + "  " + line + pad + "  " + pc.dim("│"));
   }
-  console.log(borderBottom + "\n");
-
-  qrcode.generate(options.tunnelUrl, { small: true }, qrcodeStr => {
-    console.log(qrcodeStr);
-  });
-
+  console.log(borderBottom);
   console.log(pc.dim("\n  Requests:"));
 }

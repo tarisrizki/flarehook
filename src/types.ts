@@ -45,11 +45,21 @@ export interface SanitizedTrafficItem {
   replayedFromId?: string;
 }
 
+export interface CustomHmacConfig {
+  headerName: string;
+  headerFormat?: string;
+  payloadFormat?: string;
+  algorithm?: "sha256" | "sha512";
+  encoding?: "hex" | "base64";
+  timestampFormat?: "seconds" | "milliseconds";
+}
+
 export interface ReplayPayload {
   customHeaders?: Record<string, string>;
   customBodyText?: string;
-  reSignPreset?: "stripe" | "github" | "midtrans";
+  reSignPreset?: "stripe" | "github" | "midtrans" | "custom";
   webhookSecret?: string;
+  customHmac?: CustomHmacConfig;
 }
 
 export interface TunnelSession {

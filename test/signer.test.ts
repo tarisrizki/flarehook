@@ -90,4 +90,46 @@ describe("Webhook Re-Signer", () => {
 
     expect(body.signature_key).toBe(expectedHash);
   });
+
+  it("recomputes Slack signature using custom HMAC template", () => {
+    const secret = "slack_signing_secret_xyz";
+    const result = reSignWebhook(baseReq, {
+      reSignPreset: "custom",
+      webhookSecret: secret,
+      customHmac: {
+        headerName: "x-slack-signature",
+        headerFormat: "v0={hash}",
+        payloadFormat: "v0:{timestamp}:{body}",
+        algorithm: "sha256",
+        encoding: "hex"
+      }
+    });
+
+    const sigHeader = result.headers["x-slack-signature"] as string;
+    expect(sigHeader).toMatch(/^v0=[a-f0-9]{64}$/);
+    const tsHeader = result.headers["x-slack-request-timestamp"];
+    expect(tsHeader).toBeDefined();
+  });
+
+  it("recomputes Shopify base64 signature using custom HMAC template", () => {
+    const secret = "shopify_secret_key";
+    const result = reSignWebhook(baseReq, {
+      reSignPreset: "custom",
+      webhookSecret: secret,
+      customHmac: {
+        headerName: "x-shopify-hmac-sha256",
+        headerFormat: "{hash}",
+        payloadFormat: "{body}",
+        algorithm: "sha256",
+        encoding: "base64"
+      }
+    });
+
+    const expectedHash = crypto
+      .createHmac("sha256", secret)
+      .update(baseReq.rawBody)
+      .digest("base64");
+
+    expect(result.headers["x-shopify-hmac-sha256"]).toBe(expectedHash);
+  });
 });

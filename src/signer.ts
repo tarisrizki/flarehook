@@ -53,6 +53,36 @@ export function reSignWebhook(
         }
         break;
       }
+
+      case "custom": {
+        if (payload.customHmac) {
+          const cfg = payload.customHmac;
+          const tsFormat = cfg.timestampFormat || "seconds";
+          const timestamp = tsFormat === "milliseconds" ? Date.now() : Math.floor(Date.now() / 1000);
+          const bodyStr = rawBody.toString("utf8");
+
+          let payloadStr = cfg.payloadFormat || "{body}";
+          payloadStr = payloadStr
+            .replace(/\{timestamp\}/g, String(timestamp))
+            .replace(/\{body\}/g, bodyStr);
+
+          const algo = cfg.algorithm || "sha256";
+          const encoding = cfg.encoding || "hex";
+          const hash = crypto.createHmac(algo, secret).update(payloadStr).digest(encoding);
+
+          let headerVal = cfg.headerFormat || "{hash}";
+          headerVal = headerVal
+            .replace(/\{timestamp\}/g, String(timestamp))
+            .replace(/\{hash\}/g, hash);
+
+          headers[cfg.headerName.toLowerCase()] = headerVal;
+
+          if (cfg.headerName.toLowerCase() === "x-slack-signature") {
+            headers["x-slack-request-timestamp"] = String(timestamp);
+          }
+        }
+        break;
+      }
     }
   }
 

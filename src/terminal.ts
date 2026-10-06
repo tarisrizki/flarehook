@@ -23,7 +23,7 @@ export function printBanner(options: {
   authEnabled?: boolean;
 }): void {
   const lines = [
-    `flarehook v1.0.0`,
+    `flarehook v1.1.0`,
     ``,
     `Tunnel URL:    ${options.tunnelUrl}`,
     `Forwarding to: ${options.targetUrl}`,

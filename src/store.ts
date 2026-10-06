@@ -65,6 +65,7 @@ export function decodeBodyText(buffer: Buffer, contentEncoding?: string | string
 export interface TrafficStoreOptions {
   maxBytes?: number;
   persistPath?: string;
+  debounceMs?: number;
 }
 
 export class TrafficStore {
@@ -72,11 +73,16 @@ export class TrafficStore {
   private totalBytes: number = 0;
   private maxBytes: number;
   private persistPath?: string;
+  private debounceMs: number;
+  private flushTimer?: NodeJS.Timeout;
+  private isWriting: boolean = false;
+  private pendingFlush: boolean = false;
   private subscribers: Set<(item: SanitizedTrafficItem) => void> = new Set();
 
   constructor(options: TrafficStoreOptions = {}) {
     this.maxBytes = options.maxBytes ?? 50 * 1024 * 1024;
     this.persistPath = options.persistPath;
+    this.debounceMs = options.debounceMs ?? 100;
 
     if (this.persistPath) {
       this.loadFromDisk();
@@ -93,7 +99,7 @@ export class TrafficStore {
     this.items.push(item);
     this.totalBytes += request.rawBody.length;
     this.evictIfNecessary();
-    this.flushToDisk();
+    this.scheduleFlush();
     this.notify(this.toSanitized(item));
     return item;
   }
@@ -104,7 +110,7 @@ export class TrafficStore {
       item.response = response;
       this.totalBytes += response.rawBody.length;
       this.evictIfNecessary();
-      this.flushToDisk();
+      this.scheduleFlush();
       this.notify(this.toSanitized(item));
     }
   }
@@ -120,7 +126,7 @@ export class TrafficStore {
   public clear(): void {
     this.items = [];
     this.totalBytes = 0;
-    this.flushToDisk();
+    this.scheduleFlush();
   }
 
   public subscribe(fn: (item: SanitizedTrafficItem) => void): () => void {
@@ -176,30 +182,91 @@ export class TrafficStore {
     }
   }
 
-  private flushToDisk(): void {
+  private serialize(): any[] {
+    return this.items.map(item => ({
+      id: item.id,
+      replayedFromId: item.replayedFromId,
+      request: {
+        ...item.request,
+        rawBody: undefined,
+        rawBodyBase64: item.request.rawBody.toString("base64")
+      },
+      response: item.response ? {
+        ...item.response,
+        rawBody: undefined,
+        rawBodyBase64: item.response.rawBody.toString("base64")
+      } : undefined
+    }));
+  }
+
+  private scheduleFlush(): void {
+    if (!this.persistPath) return;
+    if (this.debounceMs === 0) {
+      this.doFlushSync();
+      return;
+    }
+    if (this.flushTimer) return;
+    this.flushTimer = setTimeout(async () => {
+      this.flushTimer = undefined;
+      await this.doFlushAsync();
+    }, this.debounceMs);
+    if (this.flushTimer.unref) {
+      this.flushTimer.unref();
+    }
+  }
+
+  public async flush(): Promise<void> {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = undefined;
+    }
+    await this.doFlushAsync();
+  }
+
+  public flushSync(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = undefined;
+    }
+    this.doFlushSync();
+  }
+
+  private async doFlushAsync(): Promise<void> {
+    if (!this.persistPath) return;
+    if (this.isWriting) {
+      this.pendingFlush = true;
+      return;
+    }
+    this.isWriting = true;
+    try {
+      const dir = path.dirname(this.persistPath);
+      await fs.promises.mkdir(dir, { recursive: true });
+      const serialized = this.serialize();
+      const tmpPath = `${this.persistPath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+      await fs.promises.writeFile(tmpPath, JSON.stringify(serialized), "utf8");
+      await fs.promises.rename(tmpPath, this.persistPath);
+    } catch {
+      // Ignore disk write errors silently
+    } finally {
+      this.isWriting = false;
+      if (this.pendingFlush) {
+        this.pendingFlush = false;
+        this.scheduleFlush();
+      }
+    }
+  }
+
+  private doFlushSync(): void {
     if (!this.persistPath) return;
     try {
       const dir = path.dirname(this.persistPath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-
-      const serialized = this.items.map(item => ({
-        id: item.id,
-        replayedFromId: item.replayedFromId,
-        request: {
-          ...item.request,
-          rawBody: undefined,
-          rawBodyBase64: item.request.rawBody.toString("base64")
-        },
-        response: item.response ? {
-          ...item.response,
-          rawBody: undefined,
-          rawBodyBase64: item.response.rawBody.toString("base64")
-        } : undefined
-      }));
-
-      fs.writeFileSync(this.persistPath, JSON.stringify(serialized), "utf8");
+      const serialized = this.serialize();
+      const tmpPath = `${this.persistPath}.${Date.now()}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(serialized), "utf8");
+      fs.renameSync(tmpPath, this.persistPath);
     } catch {
       // Ignore disk write errors silently
     }

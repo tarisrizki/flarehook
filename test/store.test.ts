@@ -81,12 +81,44 @@ describe("TrafficStore & RAM Accounting", () => {
         byteSize: 2
       });
 
+      store1.flushSync();
+
       const store2 = new TrafficStore({ maxBytes: 10000, persistPath: testFile });
       const raw = store2.getRaw("req_persisted");
       expect(raw).toBeDefined();
       expect(raw?.request.rawBody.toString("utf8")).toBe("test-body");
       expect(raw?.response?.statusCode).toBe(200);
       expect(raw?.response?.rawBody.toString("utf8")).toBe("ok");
+    } finally {
+      if (fs.existsSync(testFile)) fs.unlinkSync(testFile);
+    }
+  });
+
+  it("flushes asynchronously without blocking via debounced flush", async () => {
+    const testFile = path.join(os.tmpdir(), `flarehook-async-${Date.now()}.json`);
+    try {
+      const store = new TrafficStore({ maxBytes: 10000, persistPath: testFile, debounceMs: 20 });
+      store.addRequest({
+        id: "req_async",
+        timestamp: Date.now(),
+        method: "GET",
+        rawUrl: "/async",
+        path: "/async",
+        headers: {},
+        rawBody: Buffer.from("async-body", "utf8"),
+        isTruncated: false,
+        byteSize: 10
+      });
+
+      // Initially file should not exist yet before debounce fires
+      expect(fs.existsSync(testFile)).toBe(false);
+
+      // Await explicit flush
+      await store.flush();
+      expect(fs.existsSync(testFile)).toBe(true);
+
+      const store2 = new TrafficStore({ maxBytes: 10000, persistPath: testFile });
+      expect(store2.getRaw("req_async")).toBeDefined();
     } finally {
       if (fs.existsSync(testFile)) fs.unlinkSync(testFile);
     }

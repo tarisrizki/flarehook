@@ -300,6 +300,7 @@ Options:
 
   // Graceful Teardown
   const shutdown = async () => {
+    store.flushSync();
     if (!isMcpMode) {
       console.log("\nShutting down tunnel...");
     } else {
